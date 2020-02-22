@@ -1,25 +1,22 @@
 import time
 from pyspark import SparkContext
 from itertools import combinations
-from itertools import chain
-import math
 import sys
 
 start = time.time()
 sc = SparkContext('local[*]','smallDataAnalysis')
 sc.setLogLevel("ERROR")
-first_file_path = 'C:\\Users\\sanka\\Desktop\\Study\\Sem3\\DM\\Assignment\\small1.csv'
-second_file_path = 'C:\\Users\\sanka\\Desktop\\Study\\Sem3\\DM\\Assignment\\small2.csv'
+first_file_path = 'C:\\Users\\sanka\\Desktop\\Study\\Sem3\\DM\\Assignment\\small2.csv'
 #file_path = sys.argv[3]
 #debFile = sc.textFile(file_path)
 debFile = sc.textFile(first_file_path)
 debHeader = debFile.first()
 
 frequentItem = []
-s = 4
+s = 9
 
 #case = sys.argv[2]
-case = 1
+case = 2
 
 
 ##A-priori to create frequent singletons, pairs up to k sizes
@@ -44,7 +41,9 @@ def apriori(keys):
     # counting the number of items corresponding to each element
     candidateItem = []
     for key in countDict.keys():
-        if (countDict.get(key) >= (len(items)/dummyRDD)*s):
+
+        support = (len(items)/rddLength)*s
+        if (countDict.get(key) >= support):
             candidateItem.append((key,))
             singletonList.append(key)
 
@@ -83,7 +82,7 @@ def apriori(keys):
 
 
             # check if the values are >= support threshold
-            support = (len(items)/dummyRDD)*s
+            support = (len(items)/rddLength)*s
             for key in tempDict.keys():
                 if (tempDict.get(key) >= support):
                     candidateItem.append(key)
@@ -124,7 +123,7 @@ def apriori(keys):
             tempList = []
 
             # check if the values are >= support threshold
-            support = (len(items) / dummyRDD) * s
+            support = (len(items) / rddLength) * s
             for key in tempDict.keys():
                 if (tempDict.get(key) >= support):
                         candidateItem.append(key)
@@ -139,29 +138,24 @@ def apriori(keys):
 ##function definition for pass 2 of SON
 def son2(mainChunk):
 
+    freqDict = {}
+    freqSet = []
+
     #consider the candidate frequent item set for the current size and compare with the mainChunk
     baskets = list(mainChunk)
 
-    #check for the element in the candidate set in the subset RDD
-    freqDict = {}
-
-    #eliminating the duplicates when adding to the dictionary
+   #check for the candidate item in the basket
     for basket in baskets:
         for candidate in candidateList:
-            if set(candidate).issubset(basket):
-                if candidate in freqDict.keys() or candidate[::-1] in freqDict.keys():
-                    if candidate[::-1] in freqDict.keys():
-                        freqDict[candidate[::-1]] += 1
-                    else:
-                        freqDict[candidate] += 1
+            if set(candidate).issubset(set(basket)):
+                if candidate in freqDict.keys():
+                    freqDict[candidate] += 1
                 else:
                     freqDict[candidate] = 1
 
-    #comparing with the support value
-    freqSet = []
-    for key in freqDict.keys():
-        if freqDict.get(key) >= s:
-            freqSet.append(key)
+    #appending the key and value pair to the set
+    for key, value in freqDict.items():
+        freqSet.append((key,value))
 
     return freqSet
 
@@ -178,7 +172,7 @@ if case == 1:
         .map(lambda x: (x[0], x[1])) \
         .groupByKey().mapValues(list).map(lambda u: u[1])
 
-    dummyRDD = len(subsetRDD.collect())
+    rddLength = len(subsetRDD.collect())
 
     # pass1 - SON algorithm
     pass1RDD = subsetRDD.mapPartitions(apriori).distinct().collect()
@@ -187,7 +181,7 @@ if case == 1:
     print("Candidates:", candidateList)
 
     # pass2 - SON algorithm
-    pass2RDD = subsetRDD.mapPartitions(son2).distinct().collect()
+    pass2RDD = subsetRDD.mapPartitions(son2).reduceByKey(lambda a,b:a+b).filter(lambda x:x[1]>=s).map(lambda x:x[0]).collect()
     frequentItem = pass2RDD
     print("Frequent Items:", frequentItem)
 
@@ -201,16 +195,18 @@ else:
     #pass1 - SON algorithm
     userRDD = debFile.filter(lambda x:x!=debHeader)\
                       .map(lambda line:line.split(","))\
-                      .map(lambda x:(x[0],x[1]))\
-                      .groupByKey().mapValues(list).map(lambda b:b[0])
+                      .map(lambda x:(x[1],x[0]))\
+                      .groupByKey().mapValues(list).map(lambda b:b[1])
+
+    rddLength = len(userRDD.collect())
 
     pass1RDD = userRDD.mapPartitions(apriori).distinct().collect()
     candidateList = pass1RDD
+    candidateList.sort()
     print("Candidates:", candidateList)
 
     # pass2 - SON algorithm
-    # for every partition passing the candidate item set and SON2 executed on it -> partition the original file by 2 - mapPartitionsWithIndex, foreachpartition
-    pass2RDD = userRDD.mapPartitions(son2).collect()
+    pass2RDD = userRDD.mapPartitions(son2).reduceByKey(lambda a,b:a+b).filter(lambda x:x[1]>=s).map(lambda x:x[0]).collect()
     frequentItem = pass2RDD
     print("Frequent Items:", frequentItem)
 
